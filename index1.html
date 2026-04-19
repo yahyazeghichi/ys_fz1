@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Chat - Offline Support</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-color: #202028;
+            --chat-bg: #000000;
+            --primary: #4cc9f0;
+            --accent: #f72585;
+            --text-color: #e0e0e0;
+            --user-bubble: #4cc9f0;
+            --other-bubble: #4895ef;
+            --border-color: #ffffff;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'VT323', monospace;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-image: 
+                linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        .terminal-container {
+            width: 100%;
+            max-width: 600px;
+            height: 90vh;
+            background-color: var(--chat-bg);
+            border: 4px solid var(--border-color);
+            box-shadow: -4px 0 0 0 rgba(0,0,0,0.5) inset, 4px 0 0 0 rgba(255,255,255,0.2) inset, 0 0 30px rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        header {
+            background-color: var(--accent);
+            padding: 10px 15px;
+            border-bottom: 4px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            font-family: 'Press Start 2P', cursive;
+            font-size: 0.8rem;
+            text-shadow: 2px 2px 0 #000;
+            color: #fff;
+            line-height: 1.5;
+        }
+        
+        .status-badge {
+            font-family: 'Press Start 2P', cursive;
+            font-size: 0.6rem;
+            background: #000;
+            color: #ff0000;
+            padding: 5px 8px;
+            border: 2px solid #fff;
+            text-transform: uppercase;
+        }
+        .status-badge.online { color: #00ff00; }
+
+        #chat-window {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            font-size: 1.4rem;
+        }
+
+        #chat-window::-webkit-scrollbar { width: 14px; }
+        #chat-window::-webkit-scrollbar-track { background: #111; }
+        #chat-window::-webkit-scrollbar-thumb { background: var(--primary); border: 2px solid #000; }
+
+        .message {
+            max-width: 80%;
+            padding: 8px 12px;
+            border: 2px solid var(--border-color);
+            position: relative;
+            line-height: 1.3;
+            word-wrap: break-word;
+            box-shadow: 4px 4px 0 #000;
+            animation: popIn 0.2s ease;
+        }
+
+        @keyframes popIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+        .message.other { align-self: flex-start; background-color: var(--other-bubble); color: #fff; border-radius: 0 12px 12px 12px; }
+        .message.mine { align-self: flex-end; background-color: var(--user-bubble); color: #000; border-radius: 12px 0 12px 12px; box-shadow: -4px 4px 0 #000; }
+
+        .message .meta { 
+            font-family: 'Press Start 2P', cursive;
+            font-size: 0.5rem; margin-bottom: 6px; display: block; opacity: 0.9; 
+            border-bottom: 1px solid rgba(0,0,0,0.2); padding-bottom: 4px;
+        }
+
+        .system-msg { text-align: center; color: #888; font-size: 1.1rem; margin: 10px 0; font-style: italic; background: rgba(255,255,255,0.05); padding: 5px; border-radius: 4px; }
+
+        .input-area {
+            padding: 10px;
+            background-color: #2b2b36;
+            border-top: 4px solid var(--border-color);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        input {
+            background: #000;
+            border: 2px solid #555;
+            color: var(--primary);
+            padding: 10px;
+            font-family: 'VT323', monospace;
+            font-size: 1.4rem;
+            outline: none;
+            width: 100%;
+        }
+        input:focus { border-color: var(--accent); }
+
+        button {
+            background-color: var(--accent);
+            color: #fff;
+            border: 2px solid var(--border-color);
+            padding: 10px 20px;
+            font-family: 'Press Start 2P', cursive;
+            font-size: 0.7rem;
+            cursor: pointer;
+            box-shadow: 4px 4px 0 #000;
+            transition: transform 0.1s;
+            white-space: nowrap;
+        }
+        button:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 #000; }
+        button:disabled { background-color: #555; cursor: not-allowed; }
+        button.clear-btn { background-color: #ff4757; font-size: 0.6rem; padding: 8px 10px; }
+
+        #login-screen {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            padding: 20px;
+        }
+
+        .login-box { text-align: center; border: 4px solid var(--border-color); padding: 30px; background: #111; box-shadow: 10px 10px 0 var(--accent); }
+        .login-box h2 { font-family: 'Press Start 2P', cursive; color: var(--primary); margin-bottom: 25px; line-height: 1.5; font-size: 1rem; }
+        
+        #login-error {
+            color: #ff4757;
+            font-family: 'VT323', monospace;
+            font-size: 1.1rem;
+            margin-top: 15px;
+            min-height: 1.5em;
+            display: block;
+            word-break: break-all;
+        }
+
+        @media (max-width: 500px) {
+            .terminal-container { height: 100vh; border: none; }
+            .message { max-width: 90%; font-size: 1.2rem; }
+            h1 { font-size: 0.6rem; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="terminal-container">
+        <header>
+            <h1>PIXEL CHAT <span style="color:var(--primary)">PERSIST</span></h1>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <button class="clear-btn" onclick="clearHistory()">CLR</button>
+                <div id="status" class="status-badge">OFFLINE</div>
+            </div>
+        </header>
+
+        <main id="chat-window">
+            <div class="system-msg">System Ready (Retained Messages ON).</div>
+        </main>
+
+        <footer class="input-area">
+            <input type="text" id="message-input" placeholder="TYPE MESSAGE..." disabled autocomplete="off">
+            <button id="send-btn" onclick="sendMessage()" disabled>SEND</button>
+        </footer>
+
+        <!-- Login Overlay -->
+        <div id="login-screen">
+            <div class="login-box">
+                <h2>ENTER YOUR<br>NICKNAME</h2>
+                <input type="text" id="username-input" placeholder="NICKNAME" maxlength="12">
+                <br><br>
+                <button id="connect-btn" onclick="attemptJoin()">CONNECT</button>
+                <span id="login-error"></span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const MQTT_HOST = "broker.emqx.io"; 
+        const MQTT_PORT = 8084; // Secure WSS Port
+        const MQTT_TOPIC = "pixel-chat-persist-v1";
+        
+        let client;
+        let myName = "";
+        // Unique ID for the session
+        const clientId = "pixel-" + Math.random().toString(16).substr(2, 10);
+        const STORAGE_KEY = 'pixel_chat_history_persist';
+
+        // --- EVENT LISTENERS ---
+        document.getElementById('username-input').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') attemptJoin();
+        });
+        document.getElementById('message-input').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        loadLocalHistory();
+
+        // --- JOIN LOGIC ---
+        function attemptJoin() {
+            const nameInput = document.getElementById('username-input');
+            const errorSpan = document.getElementById('login-error');
+            
+            errorSpan.innerText = "Connecting Securely...";
+            errorSpan.style.color = "#ffff00"; 
+
+            if (!nameInput || !nameInput.value) {
+                errorSpan.innerText = "Error: Input box not found!";
+                errorSpan.style.color = "red";
+                return;
+            }
+
+            myName = nameInput.value.trim();
+            
+            if (myName.length < 2) {
+                errorSpan.innerText = "Name is too short!";
+                errorSpan.style.color = "red";
+                return;
+            }
+
+            connectToMQTT(function(success) {
+                if(success) {
+                    document.getElementById('login-screen').style.display = 'none';
+                    document.getElementById('message-input').disabled = false;
+                    document.getElementById('send-btn').disabled = false;
+                    document.getElementById('message-input').focus();
+                    addSystemMessage("Connected. Last message loaded.");
+                } else {
+                    errorSpan.innerText = "Connection Failed.";
+                    errorSpan.style.color = "red";
+                }
+            });
+        }
+
+        // --- CONNECTION LOGIC ---
+        function connectToMQTT(callback) {
+            updateStatus("CONNECTING...", false);
+            
+            client = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, clientId);
+
+            client.onConnectionLost = function(responseObject) {
+                if (responseObject.errorCode !== 0) {
+                    console.log("Connection lost: " + responseObject.errorMessage);
+                    updateStatus("DISCONNECTED", false);
+                    addSystemMessage("Connection lost. Reconnecting...");
+                    setTimeout(() => connectToMQTT(() => {}), 5000);
+                }
+            };
+
+            client.onMessageArrived = onMessageArrived;
+
+            const options = {
+                timeout: 10, 
+                useSSL: true,
+                cleanSession: false, // Try to keep session state if possible
+                onSuccess: function() {
+                    console.log("Connected");
+                    updateStatus("ONLINE", true);
+                    // Subscribe to get the retained message immediately
+                    client.subscribe(MQTT_TOPIC, {qos: 0});
+                    callback(true);
+                },
+                onFailure: function(responseObject) {
+                    console.log("Connection failed: " + responseObject.errorMessage);
+                    updateStatus("ERROR", false);
+                    callback(false);
+                }
+            };
+
+            try {
+                client.connect(options);
+            } catch (error) {
+                console.error("JS Error:", error);
+                callback(false);
+            }
+        }
+
+        // --- MESSAGING LOGIC ---
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            const text = input.value.trim();
+
+            if (text !== "" && client && client.isConnected()) {
+                const messageData = {
+                    id: clientId,
+                    sender: myName,
+                    text: text,
+                    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+                };
+
+                const message = new Paho.MQTT.Message(JSON.stringify(messageData));
+                message.destinationName = MQTT_TOPIC;
+                
+                // KEY FEATURE: This tells the broker to KEEP the last message
+                message.retained = true; 
+                
+                client.send(message);
+
+                renderMessage(messageData, true);
+                saveToHistory(messageData, true);
+
+                input.value = '';
+                input.focus();
+            } else {
+                alert("Not connected or empty message.");
+            }
+        }
+
+        function onMessageArrived(message) {
+            try {
+                const payload = message.payloadString;
+                // Check if message is empty (sometimes retained messages can be empty payload)
+                if (!payload) return;
+
+                const data = JSON.parse(payload);
+                
+                // Duplicate check is tricky with Retained messages because you might receive your own retained message back on reconnect
+                // We rely on the 'id' check, but be aware it might show your last message again if you reload.
+                // That's actually desired behavior in this "Offline Mode" to confirm state.
+                
+                renderMessage(data, false); // Treat all incoming messages as 'other' to ensure visibility
+                
+                // Only save if it's not me (to avoid double saving in history logic)
+                if (data.id !== clientId) {
+                    saveToHistory(data, false);
+                }
+                
+            } catch (e) {
+                console.error("Parse error", e);
+            }
+        }
+
+        // --- UI HELPERS ---
+        function renderMessage(data, isMe) {
+            const chatWindow = document.getElementById('chat-window');
+            
+            // Check if message already exists to prevent duplicates when refreshing
+            const existing = Array.from(document.querySelectorAll('.message')).find(el => el.innerText.includes(data.text) && el.querySelector('.meta').innerText.includes(data.sender));
+            if (existing) return;
+
+            const msgDiv = document.createElement('div');
+            // Force styling based on ID to ensure correct colors even if received as retained
+            const amISender = (data.id === clientId);
+            
+            msgDiv.classList.add('message');
+            msgDiv.classList.add(amISender ? 'mine' : 'other');
+            
+            msgDiv.innerHTML = `<span class="meta">${data.sender} [${data.time || '...'}]</span>${escapeHtml(data.text)}`;
+            chatWindow.appendChild(msgDiv);
+            scrollToBottom();
+        }
+
+        function addSystemMessage(text) {
+            const chatWindow = document.getElementById('chat-window');
+            const div = document.createElement('div');
+            div.className = 'system-msg';
+            div.innerText = `> ${text}`;
+            chatWindow.appendChild(div);
+            scrollToBottom();
+        }
+
+        function updateStatus(text, isOnline) {
+            const badge = document.getElementById('status');
+            badge.innerText = text;
+            if(isOnline) badge.classList.add('online');
+            else badge.classList.remove('online');
+        }
+
+        function scrollToBottom() {
+            const chatWindow = document.getElementById('chat-window');
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        function clearHistory() {
+            if(confirm("Delete all local chat history?")) {
+                localStorage.removeItem(STORAGE_KEY);
+                document.getElementById('chat-window').innerHTML = '<div class="system-msg">History cleared.</div>';
+            }
+        }
+
+        // --- STORAGE ---
+        function saveToHistory(data, isMe) {
+            let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+            history.push({ ...data, isMe: isMe });
+            if (history.length > 50) history = history.slice(-50);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+        }
+
+        function loadLocalHistory() {
+            let history = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+            history.forEach(msg => renderMessage(msg, msg.isMe));
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/[&<>"']/g, function(m) { 
+                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'}[m]; 
+            });
+        }
+    </script>
+</body>
+</html>
